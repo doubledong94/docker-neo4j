@@ -83,6 +83,10 @@ mkdir -p ${COREDB_LOCALCXT_DIR}/local-package
 cp ${SRC_DIR}/common/* ${COREDB_LOCALCXT_DIR}/local-package
 cp ${SRC_DIR}/${BRANCH}/coredb/*.sh ${COREDB_LOCALCXT_DIR}/local-package
 cp ${SRC_DIR}/${BRANCH}/coredb/*.json ${COREDB_LOCALCXT_DIR}/local-package
+# vendor su-exec sources so the image build needs no git/github access
+if [ -d "${SRC_DIR}/${BRANCH}/coredb/su-exec-vendor" ]; then
+    cp -r "${SRC_DIR}/${BRANCH}/coredb/su-exec-vendor" ${COREDB_LOCALCXT_DIR}/local-package/
+fi
 coredb_sha=$(shasum --algorithm=256 "$(cached_tarball "${NEO4JVERSION}" "${NEO4JEDITION}")" | cut -d' ' -f1)
 cp "$(cached_tarball "${NEO4JVERSION}" "${NEO4JEDITION}")" ${COREDB_LOCALCXT_DIR}/local-package/
 

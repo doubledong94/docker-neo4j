@@ -1,3 +1,6 @@
+ARG NEO4J_BROWSER_IMAGE=neo4j:2026-community
+FROM ${NEO4J_BROWSER_IMAGE} AS browser
+
 FROM debian:trixie-slim
 ENV JAVA_HOME=/opt/java/openjdk
 COPY --from=eclipse-temurin:25 $JAVA_HOME $JAVA_HOME
@@ -11,21 +14,49 @@ RUN "$JAVA_HOME/bin/keytool" -list -v -cacerts -storepass changeit \
           "$JAVA_HOME/bin/keytool" -delete -cacerts -storepass changeit -alias "$alias"; \
         done
 ENV PATH="${JAVA_HOME}/bin:${PATH}" \
-    NEO4J_SHA256=%%NEO4J_SHA%% \
-    NEO4J_TARBALL=%%NEO4J_TARBALL%% \
-    NEO4J_EDITION=%%NEO4J_EDITION%% \
     NEO4J_HOME="/var/lib/neo4j" \
     LANG=C.UTF-8
+
+# =============================================================================
+# Layer A: base tool-chain and su-exec. This layer does NOT depend on the Neo4j
+# tarball, so it stays cached across Neo4j rebuilds. Keep it ABOVE the tarball
+# COPY/ENV below, otherwise every rebuild re-downloads the whole apt package set.
+# su-exec sources are vendored (copied from the build context) so the build needs
+# no git/github access, which is unreliable from some networks.
+# =============================================================================
+COPY ./local-package/su-exec-vendor/su-exec.c ./local-package/su-exec-vendor/Makefile /su-exec/
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install --no-install-recommends -o Acquire::Retries=10 -y \
+      gcc libc-dev make \
+    && groupadd --gid 7474 --system neo4j \
+    && useradd --uid 7474 --system --no-create-home --home "${NEO4J_HOME}" --gid neo4j neo4j \
+    && cd /su-exec \
+    && echo d6c40440609a23483f12eb6295b5191e94baf08298a856bab6e15b10c3b82891 su-exec.c | sha256sum -c \
+    && echo 2a87af245eb125aca9305a0b1025525ac80825590800f047419dc57bba36b334 Makefile | sha256sum -c \
+    && make \
+    && mv /su-exec/su-exec /usr/bin/su-exec \
+    && apt-get -y purge --auto-remove gcc libc-dev make \
+    && apt-get install --no-install-recommends -o Acquire::Retries=10 -y \
+      curl ca-certificates jq procps tini wget \
+    && rm -rf /var/lib/apt/lists/* /su-exec
+
+# =============================================================================
+# Browser assets + tarball-specific values. Everything from here down invalidates
+# when the Neo4j tarball changes (that is expected and cheap).
+# =============================================================================
+COPY --from=browser /var/lib/neo4j/web/ /opt/browser/
+ENV NEO4J_SHA256=%%NEO4J_SHA%% \
+    NEO4J_TARBALL=%%NEO4J_TARBALL%% \
+    NEO4J_EDITION=%%NEO4J_EDITION%%
 ARG NEO4J_URI=%%NEO4J_DIST_SITE%%/%%NEO4J_TARBALL%%
 
 COPY ./local-package/* /startup/
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends -o Acquire::Retries=10 -y \
-      curl ca-certificates gcc libc-dev git jq make procps tini wget \
-    && groupadd --gid 7474 --system neo4j \
-    && useradd --uid 7474 --system --no-create-home --home "${NEO4J_HOME}" --gid neo4j neo4j \
-    && curl --fail --silent --show-error --location --remote-name ${NEO4J_URI} \
+# =============================================================================
+# Layer B: extract and configure the Neo4j distribution.
+# =============================================================================
+RUN curl --fail --silent --show-error --location --remote-name ${NEO4J_URI} \
     && echo "${NEO4J_SHA256}  ${NEO4J_TARBALL}" | sha256sum -c --strict --quiet \
     && tar --extract --file ${NEO4J_TARBALL} --directory /var/lib \
     && mv /var/lib/neo4j-* "${NEO4J_HOME}" \
@@ -43,15 +74,10 @@ RUN apt-get update \
     && chmod -R 755 "${NEO4J_HOME}/bin" \
     && ln -s /data "${NEO4J_HOME}"/data \
     && ln -s /logs "${NEO4J_HOME}"/logs \
-    && git clone https://github.com/ncopa/su-exec.git \
-    && cd su-exec \
-    && git checkout 4c3bb42b093f14da70d8ab924b487ccfbb1397af \
-    && echo d6c40440609a23483f12eb6295b5191e94baf08298a856bab6e15b10c3b82891 su-exec.c | sha256sum -c \
-    && echo 2a87af245eb125aca9305a0b1025525ac80825590800f047419dc57bba36b334 Makefile | sha256sum -c \
-    && make \
-    && mv /su-exec/su-exec /usr/bin/su-exec \
-    && apt-get -y purge --auto-remove curl gcc git make libc-dev \
-    && rm -rf /var/lib/apt/lists/* /su-exec
+    && mkdir -p "${NEO4J_HOME}"/web \
+    && cp /opt/browser/*.zip "${NEO4J_HOME}"/web/ \
+    && chown -R neo4j:neo4j "${NEO4J_HOME}"/web \
+    && rm -rf /opt/browser
 
 
 ENV PATH="${NEO4J_HOME}"/bin:$PATH
