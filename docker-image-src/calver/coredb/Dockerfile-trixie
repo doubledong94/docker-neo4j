@@ -25,7 +25,7 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}" \
 # no git/github access, which is unreliable from some networks.
 # =============================================================================
 COPY ./local-package/su-exec-vendor/su-exec.c ./local-package/su-exec-vendor/Makefile /su-exec/
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && apt-get install --no-install-recommends -o Acquire::Retries=10 -y \
       gcc libc-dev make \
